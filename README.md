@@ -57,7 +57,7 @@ Ensure your system has the standard Linux mouse daemon installed:
 
 ### Option 1: Install via Omarchy (Recommended)
 
-Once published to GitHub, install directly with Omarchy's plugin manager:
+Install directly with Omarchy's plugin manager:
 
 ```bash
 omarchy plugin add https://github.com/MagosOptimistPrime/omarchy-mouse-plugin.git --enable
