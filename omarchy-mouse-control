@@ -1,0 +1,487 @@
+#!/usr/bin/env python3
+"""
+omarchy-mouse-control: Control gaming mouse DPI, polling rate, sensitivity, lighting, and query battery.
+Targeted reliably to Profile 0 with atomic LED commands and dynamic theme synchronization.
+"""
+
+import sys
+import os
+import json
+import glob
+import re
+import signal
+import time
+import subprocess
+
+CONFIG_FILE = os.path.expanduser("~/.config/omarchy/mouse-lighting.json")
+STATE_DIR = os.path.expanduser("~/.local/state/omarchy")
+PID_FILE = os.path.join(STATE_DIR, "mouse-theme-cycle.pid")
+COLORS_FILE = os.path.join(STATE_DIR, "current/theme/colors.toml")
+
+def load_lighting_config():
+    default_config = {
+        "enabled": True,
+        "mode": "theme",
+        "color": "#eb8b54",
+        "breathing": False,
+        "brightness": 255
+    }
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                data = json.load(f)
+                default_config.update(data)
+        except Exception:
+            pass
+    return default_config
+
+def save_lighting_config(cfg):
+    try:
+        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception as e:
+        print(f"Warning: could not save lighting config: {e}", file=sys.stderr)
+
+def get_theme_colors():
+    colors = []
+    if os.path.exists(COLORS_FILE):
+        try:
+            with open(COLORS_FILE, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if "=" in line and "#" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.split("#")[1].strip().strip("\"'").replace(";", "")
+                        if k in ["accent", "red", "orange", "yellow", "green", "cyan", "blue", "magenta", "foreground"]:
+                            colors.append("#" + v[:6].lower())
+        except Exception:
+            pass
+    seen = set()
+    unique = [c for c in colors if not (c in seen or seen.add(c))]
+    if not unique:
+        unique = ["#7d82d9", "#ffcead", "#ed5b5a", "#e9bb4f", "#eb8b54", "#92a593", "#a3bfd1", "#c89dc1"]
+    return unique
+
+def find_ratbag_device():
+    try:
+        out = subprocess.check_output(["ratbagctl", "list"], timeout=1.5, text=True)
+        for line in out.strip().splitlines():
+            if ":" in line:
+                dev_id, dev_name = line.split(":", 1)
+                return dev_id.strip(), dev_name.strip()
+    except Exception:
+        pass
+    return None, None
+
+def ensure_profile_0(dev_id):
+    try:
+        p = subprocess.check_output(["ratbagctl", dev_id, "profile", "active", "get"], timeout=1.0, text=True).strip()
+        if p != "0":
+            subprocess.call(["ratbagctl", dev_id, "profile", "active", "set", "0"], timeout=1.5)
+    except Exception:
+        pass
+
+def is_cycle_running():
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, "r") as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)
+            return True
+        except Exception:
+            pass
+    return False
+
+def stop_cycle_daemon():
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, "r") as f:
+                pid = int(f.read().strip())
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+        try:
+            os.remove(PID_FILE)
+        except Exception:
+            pass
+
+def start_cycle_daemon():
+    stop_cycle_daemon()
+    os.makedirs(STATE_DIR, exist_ok=True)
+    subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "_theme-cycle-daemon"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True
+    )
+
+def run_theme_cycle_daemon():
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+    def handle_term(signum, frame):
+        try:
+            os.remove(PID_FILE)
+        except Exception:
+            pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, handle_term)
+    signal.signal(signal.SIGINT, handle_term)
+
+    dev_id, _ = find_ratbag_device()
+    if not dev_id:
+        sys.exit(1)
+
+    ensure_profile_0(dev_id)
+
+    # Ensure LED 1 is left at default off (hardware handles DPI indication)
+    try:
+        subprocess.call(["ratbagctl", dev_id, "profile", "0", "led", "1", "set", "mode", "off"], timeout=1.5)
+    except Exception:
+        pass
+
+    while True:
+        cfg = load_lighting_config()
+        if not cfg.get("enabled", True) or cfg.get("mode") != "theme":
+            break
+
+        palette = get_theme_colors()
+        if not palette:
+            palette = ["#7d82d9", "#ffcead", "#ed5b5a", "#e9bb4f", "#eb8b54", "#92a593"]
+
+        for col in palette:
+            cfg = load_lighting_config()
+            if not cfg.get("enabled", True) or cfg.get("mode") != "theme":
+                break
+            bgt = max(0, min(255, int(cfg.get("brightness", 255))))
+            clean_col = col.lstrip("#")
+
+            try:
+                subprocess.call([
+                    "ratbagctl", dev_id, "profile", "0", "led", "0", "set",
+                    "mode", "on",
+                    "color", clean_col,
+                    "brightness", str(bgt)
+                ], timeout=2.0)
+            except Exception:
+                pass
+
+            # Slow 8-second progression through each theme color.
+            # Poll every 0.5s so theme changes or user toggles react promptly.
+            start_sleep = time.time()
+            palette_snapshot = tuple(palette)
+            while time.time() - start_sleep < 8.0:
+                time.sleep(0.5)
+                new_palette = get_theme_colors()
+                if tuple(new_palette) != palette_snapshot:
+                    break
+                cfg_check = load_lighting_config()
+                if not cfg_check.get("enabled", True) or cfg_check.get("mode") != "theme":
+                    break
+
+    try:
+        os.remove(PID_FILE)
+    except Exception:
+        pass
+
+def apply_lighting():
+    cfg = load_lighting_config()
+    dev_id, _ = find_ratbag_device()
+    if not dev_id:
+        return
+
+    ensure_profile_0(dev_id)
+
+    enabled = cfg.get("enabled", True)
+    mode = cfg.get("mode", "theme")
+    bgt = max(0, min(255, int(cfg.get("brightness", 255))))
+    color = cfg.get("color", "#eb8b54").lstrip("#")
+    breathing = cfg.get("breathing", False)
+
+    if not enabled:
+        stop_cycle_daemon()
+        try:
+            subprocess.call([
+                "ratbagctl", dev_id, "profile", "0", "led", "0", "set",
+                "mode", "off"
+            ], timeout=2.0)
+        except Exception:
+            pass
+        return
+
+    if mode == "theme":
+        start_cycle_daemon()
+    elif mode == "rainbow":
+        stop_cycle_daemon()
+        try:
+            subprocess.call([
+                "ratbagctl", dev_id, "profile", "0", "led", "0", "set",
+                "mode", "cycle",
+                "duration", "8000",
+                "brightness", str(bgt)
+            ], timeout=2.0)
+        except Exception:
+            pass
+    elif mode == "custom":
+        stop_cycle_daemon()
+        if breathing:
+            try:
+                subprocess.call([
+                    "ratbagctl", dev_id, "profile", "0", "led", "0", "set",
+                    "mode", "breathing",
+                    "color", color,
+                    "duration", "3000",
+                    "brightness", str(bgt)
+                ], timeout=2.0)
+            except Exception:
+                pass
+        else:
+            try:
+                subprocess.call([
+                    "ratbagctl", dev_id, "profile", "0", "led", "0", "set",
+                    "mode", "on",
+                    "color", color,
+                    "brightness", str(bgt)
+                ], timeout=2.0)
+            except Exception:
+                pass
+
+def get_state():
+    data = {
+        "connected": False,
+        "name": "Logitech Mouse",
+        "battery": -1,
+        "battery_status": "Unknown",
+        "active_dpi": 1200,
+        "dpis": [400, 800, 1200, 1600, 3200, 6400],
+        "active_rate": 1000,
+        "rates": [125, 250, 500, 1000],
+        "hypr_sensitivity": 0.0,
+        "lighting": {
+            "enabled": True,
+            "mode": "theme",
+            "color": "#eb8b54",
+            "breathing": False,
+            "brightness": 255,
+            "theme_colors": []
+        }
+    }
+
+    # 1. Battery from sysfs
+    for p in glob.glob("/sys/class/power_supply/hidpp_battery*") + glob.glob("/sys/class/power_supply/mouse_battery*"):
+        try:
+            if os.path.exists(os.path.join(p, "capacity")):
+                with open(os.path.join(p, "capacity")) as f:
+                    data["battery"] = int(f.read().strip())
+            if os.path.exists(os.path.join(p, "status")):
+                with open(os.path.join(p, "status")) as f:
+                    data["battery_status"] = f.read().strip()
+            if os.path.exists(os.path.join(p, "model_name")):
+                with open(os.path.join(p, "model_name")) as f:
+                    name = f.read().strip()
+                    if name:
+                        data["name"] = name
+            data["connected"] = True
+            break
+        except Exception:
+            pass
+
+    # 2. Hyprland sensitivity
+    try:
+        out = subprocess.check_output(["hyprctl", "getoption", "input:sensitivity", "-j"], timeout=1)
+        j = json.loads(out)
+        data["hypr_sensitivity"] = round(j.get("float", 0.0), 2)
+    except Exception:
+        pass
+
+    # 3. Ratbagctl device info
+    dev_id, dev_name = find_ratbag_device()
+    if dev_id:
+        if dev_name:
+            data["name"] = dev_name
+        data["connected"] = True
+        ensure_profile_0(dev_id)
+        try:
+            dpi_out = subprocess.check_output(["ratbagctl", dev_id, "profile", "0", "dpi", "get"], timeout=1.5, text=True)
+            data["active_dpi"] = int(dpi_out.strip().replace("dpi", ""))
+        except Exception:
+            pass
+
+        try:
+            dpis_all = subprocess.check_output(["ratbagctl", dev_id, "profile", "0", "dpi", "get-all"], timeout=1.5, text=True)
+            dpis_parsed = [int(d) for d in dpis_all.strip().split() if d.isdigit()]
+            if dpis_parsed:
+                if 1200 not in dpis_parsed:
+                    dpis_parsed = sorted(list(set(dpis_parsed + [1200])))
+                data["dpis"] = dpis_parsed
+        except Exception:
+            pass
+
+        try:
+            rate_out = subprocess.check_output(["ratbagctl", dev_id, "profile", "0", "rate", "get"], timeout=1.5, text=True)
+            data["active_rate"] = int(rate_out.strip().replace("Hz", ""))
+        except Exception:
+            pass
+
+        try:
+            rates_all = subprocess.check_output(["ratbagctl", dev_id, "profile", "0", "rate", "get-all"], timeout=1.5, text=True)
+            rates_parsed = [int(r) for r in rates_all.strip().split() if r.isdigit()]
+            if rates_parsed:
+                data["rates"] = sorted(rates_parsed)
+        except Exception:
+            pass
+
+    # 4. Lighting state
+    cfg = load_lighting_config()
+    cfg["theme_colors"] = get_theme_colors()
+    if cfg.get("enabled", True) and cfg.get("mode") == "theme" and not is_cycle_running():
+        start_cycle_daemon()
+    data["lighting"] = cfg
+
+    return data
+
+def set_dpi(dpi_val):
+    dev_id, _ = find_ratbag_device()
+    if not dev_id:
+        return False
+    ensure_profile_0(dev_id)
+    try:
+        subprocess.check_call(["ratbagctl", dev_id, "profile", "0", "dpi", "set", str(dpi_val)], timeout=2)
+        return True
+    except Exception as e:
+        print(f"Error setting DPI: {e}", file=sys.stderr)
+        return False
+
+def set_rate(rate_val):
+    dev_id, _ = find_ratbag_device()
+    if not dev_id:
+        return False
+    ensure_profile_0(dev_id)
+    try:
+        subprocess.check_call(["ratbagctl", dev_id, "profile", "0", "rate", "set", str(rate_val)], timeout=2)
+        return True
+    except Exception as e:
+        print(f"Error setting rate: {e}", file=sys.stderr)
+        return False
+
+def set_sensitivity(sens_val):
+    try:
+        sens_float = float(sens_val)
+        sens_float = max(-1.0, min(1.0, sens_float))
+    except ValueError:
+        return False
+
+    try:
+        subprocess.check_call(["hyprctl", "eval", f"hl.config({{ input = {{ sensitivity = {sens_float:.2f} }} }})"], timeout=2)
+    except Exception as e:
+        print(f"Error applying sensitivity to Hyprland: {e}", file=sys.stderr)
+
+    input_lua = os.path.expanduser("~/.config/hypr/input.lua")
+    if os.path.exists(input_lua):
+        try:
+            with open(input_lua, "r") as f:
+                content = f.read()
+            new_content = re.sub(r"(\bsensitivity\s*=\s*)[-0-9.]+(,?)", rf"\g<1>{sens_float:.2f}\g<2>", content)
+            with open(input_lua, "w") as f:
+                f.write(new_content)
+        except Exception as e:
+            print(f"Warning: could not update {input_lua}: {e}", file=sys.stderr)
+
+    return True
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("state", "--json"):
+        print(json.dumps(get_state(), indent=2))
+    elif sys.argv[1] == "_theme-cycle-daemon":
+        run_theme_cycle_daemon()
+    elif sys.argv[1] == "set-dpi":
+        if len(sys.argv) < 3:
+            sys.exit(1)
+        if not set_dpi(sys.argv[2]):
+            sys.exit(1)
+        print("ok")
+    elif sys.argv[1] == "set-rate":
+        if len(sys.argv) < 3:
+            sys.exit(1)
+        if not set_rate(sys.argv[2]):
+            sys.exit(1)
+        print("ok")
+    elif sys.argv[1] in ("set-sensitivity", "set-sens"):
+        if len(sys.argv) < 3:
+            sys.exit(1)
+        if not set_sensitivity(sys.argv[2]):
+            sys.exit(1)
+        print("ok")
+    elif sys.argv[1] == "set-lighting-toggle":
+        cfg = load_lighting_config()
+        if len(sys.argv) >= 3:
+            val = sys.argv[2] in ("1", "true", "True", "on")
+        else:
+            val = not cfg.get("enabled", True)
+        cfg["enabled"] = val
+        save_lighting_config(cfg)
+        apply_lighting()
+        print("ok")
+    elif sys.argv[1] == "set-lighting-mode":
+        if len(sys.argv) < 3:
+            sys.exit(1)
+        mode = sys.argv[2].lower()
+        if mode not in ("theme", "rainbow", "custom", "off"):
+            sys.exit(1)
+        cfg = load_lighting_config()
+        if mode == "off":
+            cfg["enabled"] = False
+        else:
+            cfg["enabled"] = True
+            cfg["mode"] = mode
+        save_lighting_config(cfg)
+        apply_lighting()
+        print("ok")
+    elif sys.argv[1] == "set-lighting-color":
+        if len(sys.argv) < 3:
+            sys.exit(1)
+        color = sys.argv[2].strip()
+        if not color.startswith("#"):
+            color = "#" + color
+        cfg = load_lighting_config()
+        cfg["color"] = color
+        cfg["enabled"] = True
+        cfg["mode"] = "custom"
+        save_lighting_config(cfg)
+        apply_lighting()
+        print("ok")
+    elif sys.argv[1] == "set-lighting-breathe":
+        if len(sys.argv) < 3:
+            sys.exit(1)
+        breathe = sys.argv[2] in ("1", "true", "True", "on")
+        cfg = load_lighting_config()
+        cfg["breathing"] = breathe
+        cfg["enabled"] = True
+        cfg["mode"] = "custom"
+        save_lighting_config(cfg)
+        apply_lighting()
+        print("ok")
+    elif sys.argv[1] == "set-lighting-brightness":
+        if len(sys.argv) < 3:
+            sys.exit(1)
+        try:
+            bgt = int(float(sys.argv[2]))
+            bgt = max(0, min(255, bgt))
+        except ValueError:
+            sys.exit(1)
+        cfg = load_lighting_config()
+        cfg["brightness"] = bgt
+        save_lighting_config(cfg)
+        apply_lighting()
+        print("ok")
+    else:
+        print(f"Unknown command: {sys.argv[1]}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

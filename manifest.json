@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "optimistprime.mouse",
+  "name": "Mouse",
+  "version": "1.0.0",
+  "author": "Jason Stewart (Optimist Prime)",
+  "description": "Logitech gaming mouse controls: battery telemetry, hardware DPI, polling rate, Hyprland sensitivity, and Omarchy theme RGB lighting.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Mouse",
+    "description": "Logitech gaming mouse controls: battery telemetry, hardware DPI, polling rate, Hyprland sensitivity, and Omarchy theme RGB lighting.",
+    "category": "System",
+    "defaultSection": "right",
+    "allowMultiple": false
+  }
+}
