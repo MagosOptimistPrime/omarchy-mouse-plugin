@@ -17,7 +17,8 @@ A native, interactive **Omarchy shell** bar widget and control engine for Logite
   * Proportional smooth battery meter bar.
   * Right-click the bar icon to toggle inline battery percentage display on your status bar.
 * **🎯 Hardware DPI Sensitivity**:
-  * Instant 1-click switching between hardware DPI stages: **400**, **800**, **1200**, **1600**, **3200**, and **6400** DPI.
+  * Continuous hardware slider (`200` to `6400` DPI in 50 DPI steps) for granular precision tuning.
+  * Instant jump preset buttons: **400**, **800**, **1000**, **1200**, **1600**, and **3200** DPI.
   * Directly committed to the mouse's onboard memory profile.
 * **⚡ Polling Rate Switching**:
   * Switch hardware report rate on the fly: **125 Hz**, **250 Hz**, **500 Hz**, or **1000 Hz**.
@@ -30,8 +31,9 @@ A native, interactive **Omarchy shell** bar widget and control engine for Logite
     * Custom hex code input (`#RRGGBB`) with real-time swatch preview.
     * Clickable Omarchy theme color chips (`accent`, `red`, `orange`, `yellow`, `green`, `cyan`, `blue`, `magenta`).
     * **Dynamic Theme Slot Binding**: Selecting a theme chip binds the mouse to that color slot. Whenever you change Omarchy desktop themes (`omarchy theme set <theme>`), the mouse color automatically updates via Omarchy's native `theme-set.d` hook!
-    * **Breathe Effect**: Optional hardware-driven pulsing illumination.
-  * **Rainbow 360°**: Hardware-driven autonomous 360° spectrum wave cycle running directly inside the mouse MCU.
+    * **Breathe Effect**: Optional hardware-driven sinusoidal pulsing illumination.
+    * **Pulse Speed Slider**: Granular duration adjustment from `1s` (Fast) to `10s` (Slow), defaulted to a serene `8s` (Relaxed).
+  * **Rainbow 360°**: Hardware-driven autonomous 360° spectrum wave cycle running directly inside the mouse MCU, complete with cycle speed tuning (`1s` to `10s`).
   * **Brightness Slider**: 0% to 100% LED intensity control.
 * **🛡️ Zero-Daemon Hardware Architecture**:
   * All lighting modes execute directly in the mouse's internal MCU.
@@ -121,6 +123,7 @@ omarchy-mouse-control set-lighting-toggle 1
 omarchy-mouse-control set-lighting-mode color             # color | rainbow | off
 omarchy-mouse-control set-lighting-color "#eb8b54" orange # hex [slot_name]
 omarchy-mouse-control set-lighting-breathe 1              # 1 = breathe, 0 = solid
+omarchy-mouse-control set-lighting-duration 8              # 1 to 10 seconds (or ms)
 omarchy-mouse-control set-lighting-brightness 200         # 0 to 255
 omarchy-mouse-control sync-theme                          # Synchronize active theme slot
 ```

@@ -33,6 +33,7 @@ def load_lighting_config():
         "color": "#7d82d9",
         "theme_slot": "accent",
         "breathing": False,
+        "duration": 8000,
         "brightness": 255
     }
     if os.path.exists(CONFIG_FILE):
@@ -118,6 +119,7 @@ def apply_lighting():
     enabled = cfg.get("enabled", True)
     mode = cfg.get("mode", "color")
     bgt = max(0, min(255, int(cfg.get("brightness", 255))))
+    dur = max(1000, min(10000, int(cfg.get("duration", 8000))))
     color = cfg.get("color", "#7d82d9").lstrip("#")
     breathing = cfg.get("breathing", False)
 
@@ -136,7 +138,7 @@ def apply_lighting():
             subprocess.call([
                 "ratbagctl", dev_id, "profile", "0", "led", "0", "set",
                 "mode", "cycle",
-                "duration", "8000",
+                "duration", str(dur),
                 "brightness", str(bgt)
             ], timeout=2.0)
         except Exception:
@@ -149,7 +151,7 @@ def apply_lighting():
                     "ratbagctl", dev_id, "profile", "0", "led", "0", "set",
                     "mode", "breathing",
                     "color", color,
-                    "duration", "3000",
+                    "duration", str(dur),
                     "brightness", str(bgt)
                 ], timeout=2.0)
             except Exception:
@@ -197,8 +199,8 @@ def get_state():
         "name": "Logitech Mouse",
         "battery": -1,
         "battery_status": "Unknown",
-        "active_dpi": 1200,
-        "dpis": [400, 800, 1200, 1600, 3200, 6400],
+        "active_dpi": 1000,
+        "dpis": [400, 800, 1000, 1200, 1600, 3200],
         "active_rate": 1000,
         "rates": [125, 250, 500, 1000],
         "hypr_sensitivity": 0.0,
@@ -208,6 +210,7 @@ def get_state():
             "color": "#7d82d9",
             "theme_slot": "accent",
             "breathing": False,
+            "duration": 8000,
             "brightness": 255,
             "theme_palette": []
         }
@@ -410,6 +413,21 @@ def main():
             sys.exit(1)
         cfg = load_lighting_config()
         cfg["brightness"] = bgt
+        save_lighting_config(cfg)
+        apply_lighting()
+        print("ok")
+    elif sys.argv[1] in ("set-lighting-duration", "set-duration"):
+        if len(sys.argv) < 3:
+            sys.exit(1)
+        try:
+            val = float(sys.argv[2])
+            if val <= 20: # specified in seconds
+                val = val * 1000
+            dur = max(1000, min(10000, int(val)))
+        except ValueError:
+            sys.exit(1)
+        cfg = load_lighting_config()
+        cfg["duration"] = dur
         save_lighting_config(cfg)
         apply_lighting()
         print("ok")

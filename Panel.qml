@@ -15,8 +15,8 @@ Panel {
   property string deviceName: "Logitech G Pro"
   property int battery: -1
   property string batteryStatus: "Unknown"
-  property int activeDpi: 1200
-  property var dpis: [400, 800, 1200, 1600, 3200, 6400]
+  property int activeDpi: 1000
+  property var dpis: [400, 800, 1000, 1200, 1600, 3200]
   property int activeRate: 1000
   property var rates: [125, 250, 500, 1000]
   property real hyprSensitivity: 0.35
@@ -28,6 +28,7 @@ Panel {
   property string customColor: "#7d82d9"
   property string themeSlot: "accent"
   property bool breatheEnabled: false
+  property int lightingDuration: 8000
   property int lightingBrightness: 255
   property var themePalette: [
     { slot: "accent", color: "#7d82d9" },
@@ -90,7 +91,7 @@ Panel {
   }
 
   function setDpi(dpi) {
-    var val = parseInt(dpi, 10)
+    var val = Math.round(Number(dpi))
     root.activeDpi = val
     Quickshell.execDetached([root.mouseControlBin, "set-dpi", String(val)])
   }
@@ -131,6 +132,11 @@ Panel {
     Quickshell.execDetached([root.mouseControlBin, "set-lighting-breathe", breathe ? "1" : "0"])
   }
 
+  function setLightingDuration(dur) {
+    root.lightingDuration = dur
+    Quickshell.execDetached([root.mouseControlBin, "set-lighting-duration", String(dur)])
+  }
+
   function setLightingBrightness(bgt) {
     root.lightingBrightness = bgt
     Quickshell.execDetached([root.mouseControlBin, "set-lighting-brightness", String(Math.round(bgt))])
@@ -148,7 +154,7 @@ Panel {
           if (data.name) root.deviceName = data.name
           if (data.battery !== undefined) root.battery = data.battery
           if (data.battery_status) root.batteryStatus = data.battery_status
-          if (data.active_dpi) root.activeDpi = data.active_dpi
+          if (data.active_dpi && !dpiSlider.dragging) root.activeDpi = data.active_dpi
           if (data.active_rate) root.activeRate = data.active_rate
           if (Array.isArray(data.dpis) && data.dpis.length > 0) root.dpis = data.dpis
           if (Array.isArray(data.rates) && data.rates.length > 0) root.rates = data.rates
@@ -161,6 +167,9 @@ Panel {
             if (data.lighting.color) root.customColor = data.lighting.color
             if (data.lighting.theme_slot !== undefined) root.themeSlot = data.lighting.theme_slot
             root.breatheEnabled = data.lighting.breathing === true
+            if (data.lighting.duration !== undefined && (!durSlider || !durSlider.dragging) && (!cycleSlider || !cycleSlider.dragging)) {
+              root.lightingDuration = data.lighting.duration
+            }
             if (data.lighting.brightness !== undefined && !lightBrightnessSlider.dragging) {
               root.lightingBrightness = data.lighting.brightness
             }
@@ -442,6 +451,54 @@ Panel {
                   }
                 }
 
+                // Pulse Speed Slider (visible when Breathe is enabled)
+                Column {
+                  width: parent.width
+                  spacing: Style.space(6)
+                  visible: root.breatheEnabled
+
+                  Item {
+                    width: parent.width
+                    implicitHeight: Math.max(durHeader.implicitHeight, durVal.implicitHeight)
+
+                    PanelSectionHeader {
+                      id: durHeader
+                      text: "PULSE SPEED"
+                      foreground: root.barForeground
+                      fontFamily: root.fontFamily
+                      anchors.left: parent.left
+                      anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Text {
+                      id: durVal
+                      text: {
+                        var s = durSlider.dragging ? durSlider.liveValue : Math.round(root.lightingDuration / 1000)
+                        return s + "s (" + (s <= 3 ? "Fast" : (s <= 6 ? "Normal" : (s <= 8 ? "Relaxed" : "Slow"))) + ")"
+                      }
+                      color: Qt.darker(root.barForeground, 1.4)
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                    }
+                  }
+
+                  PanelSlider {
+                    id: durSlider
+                    width: parent.width
+                    bar: root.bar
+                    minimum: 1
+                    maximum: 10
+                    step: 1
+                    value: Math.round(root.lightingDuration / 1000)
+                    onReleased: function(v) {
+                      root.setLightingDuration(Math.round(v) * 1000)
+                    }
+                  }
+                }
+
                 // Theme Slot Subtitle & Palette Chips
                 Text {
                   text: root.themeSlot ? ("THEME COLOR (" + root.themeSlot.toUpperCase() + ")") : "THEME PALETTE"
@@ -488,10 +545,51 @@ Panel {
               }
 
               // Mode 2: Rainbow Cycle
-              Item {
+              Column {
                 width: parent.width
-                implicitHeight: rainbowLabel.implicitHeight
+                spacing: Style.space(6)
                 visible: root.lightingMode === "rainbow"
+
+                Item {
+                  width: parent.width
+                  implicitHeight: Math.max(cycleHeader.implicitHeight, cycleVal.implicitHeight)
+
+                  PanelSectionHeader {
+                    id: cycleHeader
+                    text: "CYCLE SPEED"
+                    foreground: root.barForeground
+                    fontFamily: root.fontFamily
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+
+                  Text {
+                    id: cycleVal
+                    text: {
+                      var s = cycleSlider.dragging ? cycleSlider.liveValue : Math.round(root.lightingDuration / 1000)
+                      return s + "s (" + (s <= 3 ? "Fast" : (s <= 6 ? "Normal" : (s <= 8 ? "Relaxed" : "Slow"))) + ")"
+                    }
+                    color: Qt.darker(root.barForeground, 1.4)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                }
+
+                PanelSlider {
+                  id: cycleSlider
+                  width: parent.width
+                  bar: root.bar
+                  minimum: 1
+                  maximum: 10
+                  step: 1
+                  value: Math.round(root.lightingDuration / 1000)
+                  onReleased: function(v) {
+                    root.setLightingDuration(Math.round(v) * 1000)
+                  }
+                }
 
                 Text {
                   id: rainbowLabel
@@ -572,13 +670,26 @@ Panel {
 
               Text {
                 id: dpiLabel
-                text: root.activeDpi + " DPI"
+                text: (dpiSlider.dragging ? dpiSlider.liveValue : root.activeDpi) + " DPI"
                 color: Qt.darker(root.barForeground, 1.4)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: true
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+
+            PanelSlider {
+              id: dpiSlider
+              width: parent.width
+              bar: root.bar
+              minimum: 200
+              maximum: 6400
+              step: 50
+              value: root.activeDpi
+              onReleased: function(v) {
+                root.setDpi(v)
               }
             }
 
