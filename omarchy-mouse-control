@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-omarchy-mouse-control: Control gaming mouse DPI, polling rate, sensitivity, lighting, and query battery.
-Targeted reliably to Profile 0 with atomic LED commands and dynamic theme synchronization.
+omarchy-mouse-control: Control Logitech mouse DPI, polling rate, sensitivity, lighting, and query battery.
+Targeted specifically and reliably to Profile 0 with atomic hardware LED commands.
 """
 
 import sys
@@ -9,20 +9,29 @@ import os
 import json
 import glob
 import re
-import signal
-import time
 import subprocess
 
 CONFIG_FILE = os.path.expanduser("~/.config/omarchy/mouse-lighting.json")
 STATE_DIR = os.path.expanduser("~/.local/state/omarchy")
-PID_FILE = os.path.join(STATE_DIR, "mouse-theme-cycle.pid")
 COLORS_FILE = os.path.join(STATE_DIR, "current/theme/colors.toml")
+
+DEFAULT_PALETTE = [
+    {"slot": "accent", "color": "#7d82d9"},
+    {"slot": "red", "color": "#ed5b5a"},
+    {"slot": "orange", "color": "#eb8b54"},
+    {"slot": "yellow", "color": "#e9bb4f"},
+    {"slot": "green", "color": "#92a593"},
+    {"slot": "cyan", "color": "#a3bfd1"},
+    {"slot": "blue", "color": "#7d82d9"},
+    {"slot": "magenta", "color": "#c89dc1"},
+]
 
 def load_lighting_config():
     default_config = {
         "enabled": True,
-        "mode": "theme",
-        "color": "#eb8b54",
+        "mode": "color",
+        "color": "#7d82d9",
+        "theme_slot": "accent",
         "breathing": False,
         "brightness": 255
     }
@@ -33,6 +42,13 @@ def load_lighting_config():
                 default_config.update(data)
         except Exception:
             pass
+
+    # Normalize modes (migrate legacy "theme" or "custom" to "color")
+    if default_config["mode"] in ("theme", "custom"):
+        default_config["mode"] = "color"
+    if default_config["mode"] not in ("color", "rainbow"):
+        default_config["mode"] = "color"
+
     return default_config
 
 def save_lighting_config(cfg):
@@ -43,10 +59,14 @@ def save_lighting_config(cfg):
     except Exception as e:
         print(f"Warning: could not save lighting config: {e}", file=sys.stderr)
 
-def get_theme_colors():
-    colors = []
+def get_theme_palette():
+    palette = []
+    seen_slots = set()
+    target_slots = ["accent", "red", "orange", "yellow", "green", "cyan", "blue", "magenta"]
+
     if os.path.exists(COLORS_FILE):
         try:
+            slot_colors = {}
             with open(COLORS_FILE, "r") as f:
                 for line in f:
                     line = line.strip()
@@ -54,15 +74,19 @@ def get_theme_colors():
                         k, v = line.split("=", 1)
                         k = k.strip()
                         v = v.split("#")[1].strip().strip("\"'").replace(";", "")
-                        if k in ["accent", "red", "orange", "yellow", "green", "cyan", "blue", "magenta", "foreground"]:
-                            colors.append("#" + v[:6].lower())
+                        hex_code = "#" + v[:6].lower()
+                        slot_colors[k] = hex_code
+
+            for slot in target_slots:
+                if slot in slot_colors:
+                    palette.append({"slot": slot, "color": slot_colors[slot]})
+                    seen_slots.add(slot)
         except Exception:
             pass
-    seen = set()
-    unique = [c for c in colors if not (c in seen or seen.add(c))]
-    if not unique:
-        unique = ["#7d82d9", "#ffcead", "#ed5b5a", "#e9bb4f", "#eb8b54", "#92a593", "#a3bfd1", "#c89dc1"]
-    return unique
+
+    if not palette:
+        palette = list(DEFAULT_PALETTE)
+    return palette
 
 def find_ratbag_device():
     try:
@@ -83,112 +107,6 @@ def ensure_profile_0(dev_id):
     except Exception:
         pass
 
-def is_cycle_running():
-    if os.path.exists(PID_FILE):
-        try:
-            with open(PID_FILE, "r") as f:
-                pid = int(f.read().strip())
-            os.kill(pid, 0)
-            return True
-        except Exception:
-            pass
-    return False
-
-def stop_cycle_daemon():
-    if os.path.exists(PID_FILE):
-        try:
-            with open(PID_FILE, "r") as f:
-                pid = int(f.read().strip())
-            os.kill(pid, signal.SIGTERM)
-        except Exception:
-            pass
-        try:
-            os.remove(PID_FILE)
-        except Exception:
-            pass
-
-def start_cycle_daemon():
-    stop_cycle_daemon()
-    os.makedirs(STATE_DIR, exist_ok=True)
-    subprocess.Popen(
-        [sys.executable, os.path.abspath(__file__), "_theme-cycle-daemon"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-        start_new_session=True
-    )
-
-def run_theme_cycle_daemon():
-    os.makedirs(STATE_DIR, exist_ok=True)
-    with open(PID_FILE, "w") as f:
-        f.write(str(os.getpid()))
-
-    def handle_term(signum, frame):
-        try:
-            os.remove(PID_FILE)
-        except Exception:
-            pass
-        sys.exit(0)
-
-    signal.signal(signal.SIGTERM, handle_term)
-    signal.signal(signal.SIGINT, handle_term)
-
-    dev_id, _ = find_ratbag_device()
-    if not dev_id:
-        sys.exit(1)
-
-    ensure_profile_0(dev_id)
-
-    # Ensure LED 1 is left at default off (hardware handles DPI indication)
-    try:
-        subprocess.call(["ratbagctl", dev_id, "profile", "0", "led", "1", "set", "mode", "off"], timeout=1.5)
-    except Exception:
-        pass
-
-    while True:
-        cfg = load_lighting_config()
-        if not cfg.get("enabled", True) or cfg.get("mode") != "theme":
-            break
-
-        palette = get_theme_colors()
-        if not palette:
-            palette = ["#7d82d9", "#ffcead", "#ed5b5a", "#e9bb4f", "#eb8b54", "#92a593"]
-
-        for col in palette:
-            cfg = load_lighting_config()
-            if not cfg.get("enabled", True) or cfg.get("mode") != "theme":
-                break
-            bgt = max(0, min(255, int(cfg.get("brightness", 255))))
-            clean_col = col.lstrip("#")
-
-            try:
-                subprocess.call([
-                    "ratbagctl", dev_id, "profile", "0", "led", "0", "set",
-                    "mode", "on",
-                    "color", clean_col,
-                    "brightness", str(bgt)
-                ], timeout=2.0)
-            except Exception:
-                pass
-
-            # Slow 8-second progression through each theme color.
-            # Poll every 0.5s so theme changes or user toggles react promptly.
-            start_sleep = time.time()
-            palette_snapshot = tuple(palette)
-            while time.time() - start_sleep < 8.0:
-                time.sleep(0.5)
-                new_palette = get_theme_colors()
-                if tuple(new_palette) != palette_snapshot:
-                    break
-                cfg_check = load_lighting_config()
-                if not cfg_check.get("enabled", True) or cfg_check.get("mode") != "theme":
-                    break
-
-    try:
-        os.remove(PID_FILE)
-    except Exception:
-        pass
-
 def apply_lighting():
     cfg = load_lighting_config()
     dev_id, _ = find_ratbag_device()
@@ -198,13 +116,12 @@ def apply_lighting():
     ensure_profile_0(dev_id)
 
     enabled = cfg.get("enabled", True)
-    mode = cfg.get("mode", "theme")
+    mode = cfg.get("mode", "color")
     bgt = max(0, min(255, int(cfg.get("brightness", 255))))
-    color = cfg.get("color", "#eb8b54").lstrip("#")
+    color = cfg.get("color", "#7d82d9").lstrip("#")
     breathing = cfg.get("breathing", False)
 
     if not enabled:
-        stop_cycle_daemon()
         try:
             subprocess.call([
                 "ratbagctl", dev_id, "profile", "0", "led", "0", "set",
@@ -214,10 +131,7 @@ def apply_lighting():
             pass
         return
 
-    if mode == "theme":
-        start_cycle_daemon()
-    elif mode == "rainbow":
-        stop_cycle_daemon()
+    if mode == "rainbow":
         try:
             subprocess.call([
                 "ratbagctl", dev_id, "profile", "0", "led", "0", "set",
@@ -227,8 +141,8 @@ def apply_lighting():
             ], timeout=2.0)
         except Exception:
             pass
-    elif mode == "custom":
-        stop_cycle_daemon()
+    else:
+        # mode == "color"
         if breathing:
             try:
                 subprocess.call([
@@ -251,6 +165,32 @@ def apply_lighting():
             except Exception:
                 pass
 
+def sync_theme():
+    """Sync mouse lighting color if user currently has a theme slot selected."""
+    cfg = load_lighting_config()
+    if not cfg.get("enabled", True):
+        return False
+    if cfg.get("mode") != "color":
+        return False
+
+    theme_slot = cfg.get("theme_slot")
+    if not theme_slot:
+        return False
+
+    palette = get_theme_palette()
+    matched_color = None
+    for item in palette:
+        if item.get("slot") == theme_slot:
+            matched_color = item.get("color")
+            break
+
+    if matched_color:
+        cfg["color"] = matched_color
+        save_lighting_config(cfg)
+        apply_lighting()
+        return True
+    return False
+
 def get_state():
     data = {
         "connected": False,
@@ -264,16 +204,17 @@ def get_state():
         "hypr_sensitivity": 0.0,
         "lighting": {
             "enabled": True,
-            "mode": "theme",
-            "color": "#eb8b54",
+            "mode": "color",
+            "color": "#7d82d9",
+            "theme_slot": "accent",
             "breathing": False,
             "brightness": 255,
-            "theme_colors": []
+            "theme_palette": []
         }
     }
 
     # 1. Battery from sysfs
-    for p in glob.glob("/sys/class/power_supply/hidpp_battery*") + glob.glob("/sys/class/power_supply/mouse_battery*"):
+    for p in glob.glob("/sys/class/power_supply/hidpp_battery*"):
         try:
             if os.path.exists(os.path.join(p, "capacity")):
                 with open(os.path.join(p, "capacity")) as f:
@@ -313,16 +254,6 @@ def get_state():
             pass
 
         try:
-            dpis_all = subprocess.check_output(["ratbagctl", dev_id, "profile", "0", "dpi", "get-all"], timeout=1.5, text=True)
-            dpis_parsed = [int(d) for d in dpis_all.strip().split() if d.isdigit()]
-            if dpis_parsed:
-                if 1200 not in dpis_parsed:
-                    dpis_parsed = sorted(list(set(dpis_parsed + [1200])))
-                data["dpis"] = dpis_parsed
-        except Exception:
-            pass
-
-        try:
             rate_out = subprocess.check_output(["ratbagctl", dev_id, "profile", "0", "rate", "get"], timeout=1.5, text=True)
             data["active_rate"] = int(rate_out.strip().replace("Hz", ""))
         except Exception:
@@ -332,15 +263,13 @@ def get_state():
             rates_all = subprocess.check_output(["ratbagctl", dev_id, "profile", "0", "rate", "get-all"], timeout=1.5, text=True)
             rates_parsed = [int(r) for r in rates_all.strip().split() if r.isdigit()]
             if rates_parsed:
-                data["rates"] = sorted(rates_parsed)
+                data["rates"] = rates_parsed
         except Exception:
             pass
 
     # 4. Lighting state
     cfg = load_lighting_config()
-    cfg["theme_colors"] = get_theme_colors()
-    if cfg.get("enabled", True) and cfg.get("mode") == "theme" and not is_cycle_running():
-        start_cycle_daemon()
+    cfg["theme_palette"] = get_theme_palette()
     data["lighting"] = cfg
 
     return data
@@ -397,8 +326,9 @@ def set_sensitivity(sens_val):
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("state", "--json"):
         print(json.dumps(get_state(), indent=2))
-    elif sys.argv[1] == "_theme-cycle-daemon":
-        run_theme_cycle_daemon()
+    elif sys.argv[1] == "sync-theme":
+        updated = sync_theme()
+        print("synced" if updated else "noop")
     elif sys.argv[1] == "set-dpi":
         if len(sys.argv) < 3:
             sys.exit(1)
@@ -431,7 +361,9 @@ def main():
         if len(sys.argv) < 3:
             sys.exit(1)
         mode = sys.argv[2].lower()
-        if mode not in ("theme", "rainbow", "custom", "off"):
+        if mode in ("theme", "custom"):
+            mode = "color"
+        if mode not in ("color", "rainbow", "off"):
             sys.exit(1)
         cfg = load_lighting_config()
         if mode == "off":
@@ -448,10 +380,12 @@ def main():
         color = sys.argv[2].strip()
         if not color.startswith("#"):
             color = "#" + color
+        slot_name = sys.argv[3].strip() if len(sys.argv) >= 4 else ""
         cfg = load_lighting_config()
         cfg["color"] = color
+        cfg["theme_slot"] = slot_name
         cfg["enabled"] = True
-        cfg["mode"] = "custom"
+        cfg["mode"] = "color"
         save_lighting_config(cfg)
         apply_lighting()
         print("ok")
@@ -462,7 +396,7 @@ def main():
         cfg = load_lighting_config()
         cfg["breathing"] = breathe
         cfg["enabled"] = True
-        cfg["mode"] = "custom"
+        cfg["mode"] = "color"
         save_lighting_config(cfg)
         apply_lighting()
         print("ok")

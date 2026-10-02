@@ -24,12 +24,18 @@ A native, interactive **Omarchy shell** bar widget and control engine for Logite
 * **🖱️ Hyprland Pointer Speed Synchronization**:
   * Live slider for desktop pointer speed (`-1.00` to `+1.00`).
   * Dynamically applied via `hyprctl` and permanently persisted to `~/.config/hypr/input.lua`.
-* **🌈 RGB Lighting Suite & Theme Synchronization**:
+* **🌈 RGB Lighting Suite & Omarchy Theme Synchronization**:
   * **Master Toggle**: Complete on/off switch for RGB lighting.
-  * **Theme Cycle**: Automatically cycles through the active Omarchy desktop theme colors, holding each hue for a clean 8 seconds. **Dynamically hot-reloads** whenever you change your Omarchy theme!
-  * **Custom Color**: Hex code input (`#RRGGBB`), quick-pick theme color chips, and an optional **Breathe** pulsation effect.
-  * **Rainbow 360°**: Hardware-driven autonomous 360° spectrum wave cycle.
+  * **Color Mode**:
+    * Custom hex code input (`#RRGGBB`) with real-time swatch preview.
+    * Clickable Omarchy theme color chips (`accent`, `red`, `orange`, `yellow`, `green`, `cyan`, `blue`, `magenta`).
+    * **Dynamic Theme Slot Binding**: Selecting a theme chip binds the mouse to that color slot. Whenever you change Omarchy desktop themes (`omarchy theme set <theme>`), the mouse color automatically updates via Omarchy's native `theme-set.d` hook!
+    * **Breathe Effect**: Optional hardware-driven pulsing illumination.
+  * **Rainbow 360°**: Hardware-driven autonomous 360° spectrum wave cycle running directly inside the mouse MCU.
   * **Brightness Slider**: 0% to 100% LED intensity control.
+* **🛡️ Zero-Daemon Hardware Architecture**:
+  * All lighting modes execute directly in the mouse's internal MCU.
+  * No background polling daemons or continuous RF writes — protecting wireless battery life and completely avoiding RF transceiver sleep timeouts.
 
 ---
 
@@ -112,10 +118,11 @@ omarchy-mouse-control set-sensitivity 0.35
 
 # Lighting controls
 omarchy-mouse-control set-lighting-toggle 1
-omarchy-mouse-control set-lighting-mode theme       # theme | rainbow | custom | off
-omarchy-mouse-control set-lighting-color "#eb8b54"
-omarchy-mouse-control set-lighting-breathe 1        # 1 = breathe, 0 = solid
-omarchy-mouse-control set-lighting-brightness 200   # 0 to 255
+omarchy-mouse-control set-lighting-mode color             # color | rainbow | off
+omarchy-mouse-control set-lighting-color "#eb8b54" orange # hex [slot_name]
+omarchy-mouse-control set-lighting-breathe 1              # 1 = breathe, 0 = solid
+omarchy-mouse-control set-lighting-brightness 200         # 0 to 255
+omarchy-mouse-control sync-theme                          # Synchronize active theme slot
 ```
 
 ---
@@ -124,7 +131,7 @@ omarchy-mouse-control set-lighting-brightness 200   # 0 to 255
 
 * **Self-Contained Execution**: `Panel.qml` dynamically resolves the location of `omarchy-mouse-control` in its own directory, making the plugin completely functional upon cloning without mandatory root installation.
 * **Profile 0 Pinning**: Modern Logitech mice feature multiple onboard memory slots, some of which may be disabled. This daemon strictly pins all writes to `profile 0`, preventing lighting resets to default factory red.
-* **EEPROM Longevity**: The Theme Cycle uses an 8-second interval per color to respect the write endurance of onboard SPI flash memory, avoiding wireless packet saturation while maintaining active visual life.
+* **Sleep Immunity**: Wireless mice enter a low-power deep RF sleep state when idle for ~1-2 minutes. By using one-shot hardware commands and Omarchy `theme-set.d` event hooks instead of continuous write loops, the mouse sleeps naturally and the 2.4 GHz Lightspeed RF link remains rock-solid.
 
 ---
 

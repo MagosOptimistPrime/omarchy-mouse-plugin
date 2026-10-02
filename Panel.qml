@@ -24,11 +24,21 @@ Panel {
 
   // Lighting properties
   property bool lightingEnabled: true
-  property string lightingMode: "theme"
-  property string customColor: "#eb8b54"
+  property string lightingMode: "color"
+  property string customColor: "#7d82d9"
+  property string themeSlot: "accent"
   property bool breatheEnabled: false
   property int lightingBrightness: 255
-  property var themeColors: ["#7d82d9", "#ffcead", "#ed5b5a", "#e9bb4f", "#eb8b54", "#92a593", "#a3bfd1", "#c89dc1"]
+  property var themePalette: [
+    { slot: "accent", color: "#7d82d9" },
+    { slot: "red", color: "#ed5b5a" },
+    { slot: "orange", color: "#eb8b54" },
+    { slot: "yellow", color: "#e9bb4f" },
+    { slot: "green", color: "#92a593" },
+    { slot: "cyan", color: "#a3bfd1" },
+    { slot: "blue", color: "#7d82d9" },
+    { slot: "magenta", color: "#c89dc1" }
+  ]
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -63,8 +73,7 @@ Panel {
 
   function lightingModeOptions() {
     return [
-      { value: "theme", label: "Theme Cycle" },
-      { value: "custom", label: "Custom Color" },
+      { value: "color", label: "Color" },
       { value: "rainbow", label: "Rainbow" }
     ]
   }
@@ -107,9 +116,14 @@ Panel {
     Quickshell.execDetached([root.mouseControlBin, "set-lighting-mode", mode])
   }
 
-  function setCustomColor(color) {
+  function setCustomColor(color, slot) {
     root.customColor = color
-    Quickshell.execDetached([root.mouseControlBin, "set-lighting-color", color])
+    root.themeSlot = (slot !== undefined) ? slot : ""
+    var args = [root.mouseControlBin, "set-lighting-color", color]
+    if (slot) {
+      args.push(slot)
+    }
+    Quickshell.execDetached(args)
   }
 
   function setBreathe(breathe) {
@@ -145,12 +159,13 @@ Panel {
             root.lightingEnabled = data.lighting.enabled !== false
             if (data.lighting.mode) root.lightingMode = data.lighting.mode
             if (data.lighting.color) root.customColor = data.lighting.color
+            if (data.lighting.theme_slot !== undefined) root.themeSlot = data.lighting.theme_slot
             root.breatheEnabled = data.lighting.breathing === true
             if (data.lighting.brightness !== undefined && !lightBrightnessSlider.dragging) {
               root.lightingBrightness = data.lighting.brightness
             }
-            if (Array.isArray(data.lighting.theme_colors) && data.lighting.theme_colors.length > 0) {
-              root.themeColors = data.lighting.theme_colors
+            if (Array.isArray(data.lighting.theme_palette) && data.lighting.theme_palette.length > 0) {
+              root.themePalette = data.lighting.theme_palette
             }
           }
         } catch (e) {
@@ -364,57 +379,11 @@ Panel {
                 onChanged: function(val) { root.setLightingMode(val) }
               }
 
-              // Mode 1: Theme Cycle
+              // Mode 1: Color (Hex, Breathe, and Omarchy Theme Palette Chips)
               Column {
                 width: parent.width
                 spacing: Style.space(8)
-                visible: root.lightingMode === "theme"
-
-                Row {
-                  spacing: Style.space(6)
-                  Repeater {
-                    model: root.themeColors
-                    delegate: Rectangle {
-                      required property string modelData
-                      width: Style.space(20)
-                      height: Style.space(14)
-                      radius: Style.space(3)
-                      color: modelData
-                      opacity: 0.9
-                    }
-                  }
-                }
-
-                Text {
-                  text: "Slow 8-second progression through active Omarchy theme colors"
-                  color: Qt.darker(root.barForeground, 1.4)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  width: parent.width
-                  wrapMode: Text.WordWrap
-                }
-              }
-
-              // Mode 2: Rainbow Cycle
-              Item {
-                width: parent.width
-                implicitHeight: rainbowLabel.implicitHeight
-                visible: root.lightingMode === "rainbow"
-
-                Text {
-                  id: rainbowLabel
-                  text: "Hardware 360° RGB spectrum wave cycle"
-                  color: Qt.darker(root.barForeground, 1.4)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                }
-              }
-
-              // Mode 3: Custom Color & Breathe
-              Column {
-                width: parent.width
-                spacing: Style.space(8)
-                visible: root.lightingMode === "custom"
+                visible: root.lightingMode === "color"
 
                 Item {
                   width: parent.width
@@ -443,8 +412,8 @@ Panel {
                       width: Style.space(110)
                       anchors.verticalCenter: parent.verticalCenter
                       font.pixelSize: Style.font.caption
-                      onAccepted: root.setCustomColor(text)
-                      onEditingFinished: root.setCustomColor(text)
+                      onAccepted: root.setCustomColor(text, "")
+                      onEditingFinished: root.setCustomColor(text, "")
                     }
                   }
 
@@ -473,30 +442,63 @@ Panel {
                   }
                 }
 
-                // Quick theme color chips for easy 1-click selection
+                // Theme Slot Subtitle & Palette Chips
+                Text {
+                  text: root.themeSlot ? ("THEME COLOR (" + root.themeSlot.toUpperCase() + ")") : "THEME PALETTE"
+                  color: Qt.darker(root.barForeground, 1.4)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  font.letterSpacing: 1.0
+                }
+
                 Row {
                   spacing: Style.space(8)
                   Repeater {
-                    model: root.themeColors
+                    model: root.themePalette
                     delegate: Rectangle {
-                      required property string modelData
+                      required property var modelData
                       width: Style.space(24)
                       height: Style.space(24)
                       radius: width / 2
-                      color: modelData
-                      border.width: root.customColor.toLowerCase() === modelData.toLowerCase() ? 2 : 1
-                      border.color: root.customColor.toLowerCase() === modelData.toLowerCase() ? root.barForeground : Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.25)
+                      color: modelData.color
+                      border.width: (root.themeSlot === modelData.slot) ? 2 : 1
+                      border.color: (root.themeSlot === modelData.slot) ? root.barForeground : Qt.rgba(root.barForeground.r, root.barForeground.g, root.barForeground.b, 0.25)
+
+                      Rectangle {
+                        anchors.centerIn: parent
+                        width: Style.space(6)
+                        height: Style.space(6)
+                        radius: width / 2
+                        color: "#ffffff"
+                        visible: root.themeSlot === modelData.slot
+                      }
 
                       MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                          hexField.text = modelData
-                          root.setCustomColor(modelData)
+                          hexField.text = modelData.color
+                          root.setCustomColor(modelData.color, modelData.slot)
                         }
                       }
                     }
                   }
+                }
+              }
+
+              // Mode 2: Rainbow Cycle
+              Item {
+                width: parent.width
+                implicitHeight: rainbowLabel.implicitHeight
+                visible: root.lightingMode === "rainbow"
+
+                Text {
+                  id: rainbowLabel
+                  text: "Hardware 360° RGB spectrum wave cycle (runs on-device)"
+                  color: Qt.darker(root.barForeground, 1.4)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
                 }
               }
 

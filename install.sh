@@ -39,6 +39,19 @@ install -m 644 "$SCRIPT_DIR/manifest.json" "$PLUGIN_TARGET/manifest.json"
 install -m 644 "$SCRIPT_DIR/Panel.qml" "$PLUGIN_TARGET/Panel.qml"
 install -m 755 "$SCRIPT_DIR/omarchy-mouse-control" "$PLUGIN_TARGET/omarchy-mouse-control"
 
+# Install theme-set hook for automatic theme sync
+echo "-> Installing Omarchy theme-set hook..."
+HOOK_DIR="$HOME/.config/omarchy/hooks/theme-set.d"
+mkdir -p "$HOOK_DIR"
+cat << 'EOF' > "$HOOK_DIR/mouse-theme-sync"
+#!/bin/bash
+# Sync Logitech mouse RGB lighting with the active Omarchy theme
+if command -v omarchy-mouse-control >/dev/null 2>&1; then
+  omarchy-mouse-control sync-theme >/dev/null 2>&1 || true
+fi
+EOF
+chmod 755 "$HOOK_DIR/mouse-theme-sync"
+
 # Rescan and validate
 if command -v omarchy >/dev/null 2>&1; then
   echo "-> Validating plugin with Omarchy..."
