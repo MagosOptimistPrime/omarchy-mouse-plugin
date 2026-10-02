@@ -60,7 +60,7 @@ Ensure your system has the standard Linux mouse daemon installed:
 Once published to GitHub, install directly with Omarchy's plugin manager:
 
 ```bash
-omarchy plugin add https://github.com/USERNAME/omarchy-mouse-plugin.git --enable
+omarchy plugin add https://github.com/MagosOptimistPrime/omarchy-mouse-plugin.git --enable
 ```
 
 Then reload the shell:
@@ -73,7 +73,7 @@ omarchy restart shell
 Clone this repository and run the installer script:
 
 ```bash
-git clone https://github.com/USERNAME/omarchy-mouse-plugin.git
+git clone https://github.com/MagosOptimistPrime/omarchy-mouse-plugin.git
 cd omarchy-mouse-plugin
 ./install.sh
 ```
