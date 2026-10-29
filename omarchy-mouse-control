@@ -11,6 +11,11 @@ import glob
 import re
 import subprocess
 
+# ratbagctl is a "#!/usr/bin/env python3" script that needs the system python-evdev and
+# python-gobject. A user-level Python (mise, pyenv, asdf, conda) ahead of /usr/bin in PATH
+# makes every ratbagctl call fail with "No module named 'evdev'", so prefer /usr/bin.
+os.environ["PATH"] = "/usr/bin:" + os.environ.get("PATH", "")
+
 CONFIG_FILE = os.path.expanduser("~/.config/omarchy/mouse-lighting.json")
 STATE_DIR = os.path.expanduser("~/.local/state/omarchy")
 COLORS_FILE = os.path.join(STATE_DIR, "current/theme/colors.toml")
@@ -89,16 +94,26 @@ def get_theme_palette():
         palette = list(DEFAULT_PALETTE)
     return palette
 
-def find_ratbag_device():
+def probe_ratbag_device():
+    """Return (dev_id, dev_name, error); error is a short reason when no device is usable."""
     try:
-        out = subprocess.check_output(["ratbagctl", "list"], timeout=1.5, text=True)
-        for line in out.strip().splitlines():
-            if ":" in line:
-                dev_id, dev_name = line.split(":", 1)
-                return dev_id.strip(), dev_name.strip()
-    except Exception:
-        pass
-    return None, None
+        out = subprocess.run(["ratbagctl", "list"], capture_output=True, timeout=1.5, text=True)
+    except FileNotFoundError:
+        return None, None, "ratbagctl not found (install libratbag)"
+    except subprocess.TimeoutExpired:
+        return None, None, "ratbagctl timed out (is ratbagd running?)"
+    if out.returncode != 0:
+        lines = out.stderr.strip().splitlines()
+        return None, None, lines[-1] if lines else f"ratbagctl exited with {out.returncode}"
+    for line in out.stdout.strip().splitlines():
+        if ":" in line:
+            dev_id, dev_name = line.split(":", 1)
+            return dev_id.strip(), dev_name.strip(), ""
+    return None, None, "no libratbag-supported mouse found"
+
+def find_ratbag_device():
+    dev_id, dev_name, _ = probe_ratbag_device()
+    return dev_id, dev_name
 
 def ensure_profile_0(dev_id):
     try:
@@ -204,6 +219,7 @@ def get_state():
         "active_rate": 1000,
         "rates": [125, 250, 500, 1000],
         "hypr_sensitivity": 0.0,
+        "ratbag_error": "",
         "lighting": {
             "enabled": True,
             "mode": "color",
@@ -244,7 +260,7 @@ def get_state():
         pass
 
     # 3. Ratbagctl device info
-    dev_id, dev_name = find_ratbag_device()
+    dev_id, dev_name, data["ratbag_error"] = probe_ratbag_device()
     if dev_id:
         if dev_name:
             data["name"] = dev_name
@@ -283,6 +299,19 @@ def set_dpi(dpi_val):
         return False
     ensure_profile_0(dev_id)
     try:
+        dpi_val = int(float(dpi_val))
+    except ValueError:
+        return False
+    # Sensors only accept their own DPI steps (e.g. 50 up to 1000, then 100, 200, 500) and
+    # ratbagctl silently ignores anything else, so snap to the nearest supported value.
+    try:
+        all_out = subprocess.check_output(["ratbagctl", dev_id, "profile", "0", "dpi", "get-all"], timeout=1.5, text=True)
+        supported = [int(d) for d in all_out.split() if d.isdigit()]
+        if supported:
+            dpi_val = min(supported, key=lambda d: abs(d - dpi_val))
+    except Exception:
+        pass
+    try:
         subprocess.check_call(["ratbagctl", dev_id, "profile", "0", "dpi", "set", str(dpi_val)], timeout=2)
         return True
     except Exception as e:
@@ -308,21 +337,27 @@ def set_sensitivity(sens_val):
     except ValueError:
         return False
 
-    try:
-        subprocess.check_call(["hyprctl", "eval", f"hl.config({{ input = {{ sensitivity = {sens_float:.2f} }} }})"], timeout=2)
-    except Exception as e:
-        print(f"Error applying sensitivity to Hyprland: {e}", file=sys.stderr)
-
+    # Persist before applying: Hyprland auto-reloads its config when input.lua changes, and the
+    # reload resets a value that only exists at runtime. Update active (uncommented) sensitivity
+    # lines; if there are none (Omarchy ships the example commented out), append our own.
     input_lua = os.path.expanduser("~/.config/hypr/input.lua")
     if os.path.exists(input_lua):
         try:
             with open(input_lua, "r") as f:
                 content = f.read()
-            new_content = re.sub(r"(\bsensitivity\s*=\s*)[-0-9.]+(,?)", rf"\g<1>{sens_float:.2f}\g<2>", content)
-            with open(input_lua, "w") as f:
-                f.write(new_content)
+            new_content, count = re.subn(r"^(?!\s*--)(.*\bsensitivity\s*=\s*)[-0-9.]+", rf"\g<1>{sens_float:.2f}", content, flags=re.M)
+            if count == 0:
+                new_content = content.rstrip("\n") + f"\n\nhl.config({{ input = {{ sensitivity = {sens_float:.2f} }} }}) -- set by omarchy-mouse-control\n"
+            if new_content != content:
+                with open(input_lua, "w") as f:
+                    f.write(new_content)
         except Exception as e:
             print(f"Warning: could not update {input_lua}: {e}", file=sys.stderr)
+
+    try:
+        subprocess.check_call(["hyprctl", "eval", f"hl.config({{ input = {{ sensitivity = {sens_float:.2f} }} }})"], timeout=2)
+    except Exception as e:
+        print(f"Error applying sensitivity to Hyprland: {e}", file=sys.stderr)
 
     return True
 

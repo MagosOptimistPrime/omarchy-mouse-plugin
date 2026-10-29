@@ -21,6 +21,7 @@ Panel {
   property var rates: [125, 250, 500, 1000]
   property real hyprSensitivity: 0.35
   property bool showPercentage: false
+  property string ratbagError: ""
 
   // Lighting properties
   property bool lightingEnabled: true
@@ -94,6 +95,8 @@ Panel {
     var val = Math.round(Number(dpi))
     root.activeDpi = val
     Quickshell.execDetached([root.mouseControlBin, "set-dpi", String(val)])
+    // The helper snaps to the sensor's nearest supported DPI; read back what landed.
+    refreshSoon.restart()
   }
 
   function setRate(rate) {
@@ -154,6 +157,7 @@ Panel {
           if (data.name) root.deviceName = data.name
           if (data.battery !== undefined) root.battery = data.battery
           if (data.battery_status) root.batteryStatus = data.battery_status
+          root.ratbagError = data.ratbag_error || ""
           if (data.active_dpi && !dpiSlider.dragging) root.activeDpi = data.active_dpi
           if (data.active_rate) root.activeRate = data.active_rate
           if (Array.isArray(data.dpis) && data.dpis.length > 0) root.dpis = data.dpis
@@ -195,6 +199,12 @@ Panel {
     interval: 30000
     running: !root.opened
     repeat: true
+    onTriggered: root.refresh()
+  }
+
+  Timer {
+    id: refreshSoon
+    interval: 1500
     onTriggered: root.refresh()
   }
 
@@ -243,6 +253,10 @@ Panel {
         id: scrollArea
         anchors.fill: parent
         clip: true
+        // Keep content off the clip edge: at fractional scales (e.g. 1.25) the clip
+        // otherwise eats the 1px left border of the first chip in each button row.
+        leftPadding: 1
+        rightPadding: 1
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: contentCol.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
         contentWidth: availableWidth
@@ -668,16 +682,45 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
               }
 
-              Text {
+              // Type any value (Enter or click away to apply); the helper snaps it to the sensor.
+              Row {
                 id: dpiLabel
-                text: (dpiSlider.dragging ? dpiSlider.liveValue : root.activeDpi) + " DPI"
-                color: Qt.darker(root.barForeground, 1.4)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(6)
+
+                TextField {
+                  id: dpiField
+                  text: String(dpiSlider.dragging ? dpiSlider.liveValue : root.activeDpi)
+                  width: Style.space(64)
+                  verticalPadding: Style.space(2)
+                  horizontalAlignment: TextInput.AlignRight
+                  anchors.verticalCenter: parent.verticalCenter
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  validator: IntValidator { bottom: 100; top: 26000 }
+                  onEditingFinished: if (Number(text) !== root.activeDpi) root.setDpi(text)
+                }
+
+                Text {
+                  text: "DPI"
+                  color: Qt.darker(root.barForeground, 1.4)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  anchors.verticalCenter: parent.verticalCenter
+                }
               }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.ratbagError !== ""
+              text: "Can't reach the mouse: " + root.ratbagError
+              color: Color.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.Wrap
             }
 
             PanelSlider {
